@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "848581046465",
+    "project_id": "tempmonitoring-7b676",
+    "storage_bucket": "tempmonitoring-7b676.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:848581046465:android:b29b69e38c760bcad76440",
+        "android_client_info": {
+          "package_name": "com.example.monitoringtemp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB2yKZq68nAQ8fZ-XWeo1lrgZP0b1VBFOA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -6,7 +6,7 @@ class HalfCircleTemperatureIndicator extends StatelessWidget {
   final double minTemperature = 36.0;
   final double maxTemperature = 40.0;
 
-  HalfCircleTemperatureIndicator({required this.temperature});
+  const HalfCircleTemperatureIndicator({super.key, required this.temperature});
 
   @override
   Widget build(BuildContext context) {
@@ -14,7 +14,7 @@ class HalfCircleTemperatureIndicator extends StatelessWidget {
     double progress = (temperature - minTemperature) / (maxTemperature - minTemperature);
 
     return CustomPaint(
-      size: Size(200, 100),
+      size: const Size(200, 100),
       painter: HalfCirclePainter(progress),
     );
   }

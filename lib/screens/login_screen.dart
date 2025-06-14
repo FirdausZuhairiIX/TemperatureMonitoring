@@ -1,6 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
@@ -18,12 +21,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     super.initState();
     _animationController = AnimationController(
       vsync: this,
-      duration: Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1200),
     );
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _animationController,
-        curve: Interval(0.4, 1.0, curve: Curves.easeInOut),
+        curve: const Interval(0.4, 1.0, curve: Curves.easeInOut),
       ),
     );
     _animationController.forward();
@@ -37,13 +40,29 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     super.dispose();
   }
 
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Login Failed'),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
 
     return Scaffold(
       body: Container(
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -57,32 +76,31 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           child: SingleChildScrollView(
             child: Container(
               height: size.height,
-              padding: EdgeInsets.symmetric(horizontal: 30),
+              padding: const EdgeInsets.symmetric(horizontal: 30),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SizedBox(height: size.height * 0.05),
-                  // Logo and welcome text
                   Center(
                     child: FadeTransition(
                       opacity: _fadeAnimation,
                       child: Column(
                         children: [
                           Container(
-                            padding: EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: Colors.white.withOpacity(0.2),
                               shape: BoxShape.circle,
                             ),
-                            child: Icon(
+                            child: const Icon(
                               Icons.lock_outlined,
                               size: 60,
                               color: Colors.white,
                             ),
                           ),
-                          SizedBox(height: 24),
-                          Text(
+                          const SizedBox(height: 24),
+                          const Text(
                             "Temperature Monitoring",
                             style: TextStyle(
                               fontSize: 29,
@@ -90,7 +108,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                               color: Colors.white,
                             ),
                           ),
-                          SizedBox(height: 8),
+                          const SizedBox(height: 8),
                           Text(
                             "Sign in to continue",
                             style: TextStyle(
@@ -103,8 +121,6 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                     ),
                   ),
                   SizedBox(height: size.height * 0.08),
-
-                  // Form fields
                   FadeTransition(
                     opacity: _fadeAnimation,
                     child: Column(
@@ -118,7 +134,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                             color: Colors.white.withOpacity(0.8),
                           ),
                         ),
-                        SizedBox(height: 8),
+                        const SizedBox(height: 8),
                         Container(
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.1),
@@ -126,18 +142,18 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                           ),
                           child: TextField(
                             controller: emailController,
-                            style: TextStyle(color: Colors.white),
+                            style: const TextStyle(color: Colors.white),
                             keyboardType: TextInputType.emailAddress,
                             decoration: InputDecoration(
                               hintText: "Enter your email",
                               hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-                              prefixIcon: Icon(Icons.email_outlined, color: Colors.white70),
+                              prefixIcon: const Icon(Icons.email_outlined, color: Colors.white70),
                               border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(vertical: 16),
+                              contentPadding: const EdgeInsets.symmetric(vertical: 16),
                             ),
                           ),
                         ),
-                        SizedBox(height: 20),
+                        const SizedBox(height: 20),
                         Text(
                           "Password",
                           style: TextStyle(
@@ -146,7 +162,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                             color: Colors.white.withOpacity(0.8),
                           ),
                         ),
-                        SizedBox(height: 8),
+                        const SizedBox(height: 8),
                         Container(
                           decoration: BoxDecoration(
                             color: Colors.white.withOpacity(0.1),
@@ -154,12 +170,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                           ),
                           child: TextField(
                             controller: passwordController,
-                            style: TextStyle(color: Colors.white),
+                            style: const TextStyle(color: Colors.white),
                             obscureText: !isPasswordVisible,
                             decoration: InputDecoration(
                               hintText: "Enter your password",
                               hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
-                              prefixIcon: Icon(Icons.lock_outline, color: Colors.white70),
+                              prefixIcon: const Icon(Icons.lock_outline, color: Colors.white70),
                               suffixIcon: IconButton(
                                 icon: Icon(
                                   isPasswordVisible ? Icons.visibility_off : Icons.visibility,
@@ -172,18 +188,18 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                 },
                               ),
                               border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(vertical: 16),
+                              contentPadding: const EdgeInsets.symmetric(vertical: 16),
                             ),
                           ),
                         ),
-                        SizedBox(height: 16),
+                        const SizedBox(height: 16),
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton(
                             onPressed: () {
                               // Forgot password logic
                             },
-                            child: Text(
+                            child: const Text(
                               "Forgot Password?",
                               style: TextStyle(
                                 color: Colors.white,
@@ -195,28 +211,45 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       ],
                     ),
                   ),
-
-                  SizedBox(height: 30),
-
-                  // Login button
+                  const SizedBox(height: 30),
                   FadeTransition(
                     opacity: _fadeAnimation,
-                    child: Container(
+                    child: SizedBox(
                       width: double.infinity,
                       height: 55,
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           setState(() {
                             isLoading = true;
                           });
 
-                          // Simulate loading
-                          Future.delayed(Duration(seconds: 2), () {
+                          try {
+                            final email = emailController.text.trim();
+                            final password = passwordController.text.trim();
+
+                            await FirebaseAuth.instance.signInWithEmailAndPassword(
+                              email: email,
+                              password: password,
+                            );
+
+                            Navigator.pushReplacementNamed(context, '/home');
+                          } on FirebaseAuthException catch (e) {
+                            String message = 'Incorrect email or password.';
+
+                            if (e.code == 'user-not-found') {
+                              message = 'No user found for that email.';
+                            } else if (e.code == 'wrong-password') {
+                              message = 'Incorrect password.';
+                            }
+
+                            _showErrorDialog(message);
+                          } catch (e) {
+                            _showErrorDialog('Something went wrong. Please try again.');
+                          } finally {
                             setState(() {
                               isLoading = false;
                             });
-                            Navigator.pushReplacementNamed(context, '/home');
-                          });
+                          }
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
@@ -226,7 +259,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                           elevation: 0,
                         ),
                         child: isLoading
-                            ? SizedBox(
+                            ? const SizedBox(
                           width: 24,
                           height: 24,
                           child: CircularProgressIndicator(
@@ -234,7 +267,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                             strokeWidth: 3,
                           ),
                         )
-                            : Text(
+                            : const Text(
                           "LOGIN",
                           style: TextStyle(
                             fontSize: 16,
@@ -245,10 +278,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       ),
                     ),
                   ),
-
-                  SizedBox(height: 20),
-
-                  // Registration link
+                  const SizedBox(height: 20),
                   FadeTransition(
                     opacity: _fadeAnimation,
                     child: Row(
@@ -264,7 +294,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                           onPressed: () {
                             Navigator.pushNamed(context, '/register');
                           },
-                          child: Text(
+                          child: const Text(
                             "Sign Up",
                             style: TextStyle(
                               color: Colors.white,
@@ -275,7 +305,6 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       ],
                     ),
                   ),
-
                   SizedBox(height: size.height * 0.05),
                 ],
               ),

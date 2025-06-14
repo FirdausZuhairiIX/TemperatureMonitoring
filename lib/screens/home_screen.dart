@@ -1,122 +1,223 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'dart:math';
+import 'package:intl/intl.dart';
+import 'history_screen.dart';
+import 'setting_screen.dart';
+import 'alert_screen.dart';
+import 'add_toddler.dart';
+import 'package:monitoringtemp/database_service.dart';
+import 'package:monitoringtemp/model/alert_model.dart';
+import 'package:monitoringtemp/model/side_drawer_model.dart';
+import 'package:monitoringtemp/model/home_screen_model.dart';
+import 'package:monitoringtemp/confirm_user.dart';
 
 class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
   @override
-  _HomeScreenState createState() => _HomeScreenState();
+  State<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateMixin {
-  double currentTemperature = 36.5;
-  String userName = "Alex";
-  DateTime selectedDate = DateTime.now();
-  late AnimationController _animationController;
-  late Animation<double> _temperatureAnimation;
+  final DatabaseService _databaseService = DatabaseService(); // Singleton
+  final AlertModel _alertModel = AlertModel();
 
-  // Sample temperature history data
-  final List<Map<String, dynamic>> tempHistory = [
-    {'value': 37.2, 'timestamp': DateTime.now().subtract(Duration(minutes: 5))},
-    {'value': 37.8, 'timestamp': DateTime.now().subtract(Duration(hours: 1))},
-    {'value': 38.1, 'timestamp': DateTime.now().subtract(Duration(days: 1))},
-  ];
+  String _userName = "Loading...";
+  String _userEmail = "";
+  String _toddlerName = "Loading...";
+  int _toddlerAge = 0;
+  String? _toddlerId;
+  bool _hasToddler = true;
 
-  void simulateTemperature() {
-    double newTemp = 36 + Random().nextDouble() * 2.5;
+  double _currentTemp = 0.0;
+  String _lastUpdateTime = "No data";
+  late AnimationController _tempAnimationController;
+  late Animation<double> _tempAnimation;
 
-    // Animate the temperature change
-    _animationController.reset();
-    _temperatureAnimation = Tween<double>(
-      begin: currentTemperature,
-      end: newTemp,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeInOut,
-    ));
+  List<Map<String, dynamic>> _alerts = [];
+  bool _hasHighTempAlert = false;
 
-    _animationController.forward();
+  bool _isLoading = true;
+  String _errorMessage = "";
+  int _currentTabIndex = 0;
 
-    setState(() {
-      currentTemperature = newTemp;
-    });
-  }
-
-  void updateUserName(String newName) {
-    setState(() {
-      userName = newName;
-    });
-  }
-
-  List<Map<String, dynamic>> getFilteredHistory() {
-    return tempHistory
-        .where((entry) =>
-    entry['timestamp'].year == selectedDate.year &&
-        entry['timestamp'].month == selectedDate.month &&
-        entry['timestamp'].day == selectedDate.day)
-        .toList();
-  }
+  late StreamSubscription _userDataSubscription;
+  late StreamSubscription _toddlerDataSubscription;
+  late StreamSubscription _temperatureSubscription;
+  late StreamSubscription _alertsSubscription;
 
   @override
   void initState() {
     super.initState();
+    _initializeAnimations();
+    _loadInitialData();
+  }
 
-    // First, initialize the animation controller
-    _animationController = AnimationController(
+  void _initializeAnimations() {
+    _tempAnimationController = AnimationController(
       vsync: this,
-      duration: Duration(milliseconds: 800),
+      duration: const Duration(milliseconds: 800),
     );
+    _tempAnimation = Tween<double>(begin: 0, end: 0).animate(_tempAnimationController);
+    _tempAnimationController.addListener(() => setState(() {}));
+  }
 
-    // Then, initialize the animation with the current temperature
-    _temperatureAnimation = Tween<double>(
-      begin: currentTemperature,
-      end: currentTemperature,
-    ).animate(_animationController);
+  Future<void> _loadInitialData() async {
+    try {
+      if (!_databaseService.isUserLoggedIn) {
+        setState(() {
+          _errorMessage = "No user logged in. Please sign in.";
+          _isLoading = false;
+        });
+        return;
+      }
+      _setupStreamListeners();
+      await _databaseService.initialize();
+      setState(() => _isLoading = false);
+    } catch (e) {
+      setState(() {
+        _errorMessage = "Failed to load data: ${e.toString()}";
+        _isLoading = false;
+      });
+    }
+  }
 
-    _animationController.addListener(() {
-      setState(() {});
+  void _setupStreamListeners() {
+    _userDataSubscription = _databaseService.userData.listen((userData) {
+      if (mounted) {
+        setState(() {
+          _userName = userData['user_name'] ?? "Unknown";
+          _userEmail = userData['user_email'] ?? "";
+        });
+      }
     });
 
-    // Call simulateTemperature after animations are properly set up
-    Future.delayed(Duration.zero, () {
-      simulateTemperature();
+    _toddlerDataSubscription = _databaseService.toddlerData.listen((toddlerData) {
+      if (mounted) {
+        setState(() {
+          _toddlerName = toddlerData['toddler_name'] ?? "No data found";
+          _toddlerAge = toddlerData['toddler_age'] ?? 0;
+          _toddlerId = toddlerData['toddler_id'];
+          _hasToddler = toddlerData['has_toddler'] ?? true;
+        });
+      }
     });
+
+    _temperatureSubscription = _databaseService.temperatureData.listen((tempData) {
+      if (mounted) {
+        _updateTemperature(tempData);
+      }
+    });
+
+    _alertsSubscription = _databaseService.alertsData.listen((alertsData) {
+      if (mounted) {
+        _processAlerts(alertsData);
+      }
+    });
+  }
+
+  void _updateTemperature(Map<dynamic, dynamic> data) {
+    final tempStr = data['value']?.toString() ?? '0.0';
+    final newTemp = tempStr.toLowerCase() == 'nan'
+        ? 0.0
+        : double.tryParse(tempStr) ?? 0.0;
+    final timestamp = data['timestamp']?.toString() ?? "Unknown";
+    final hasData = data['has_data'] ?? true;
+
+    _tempAnimationController.reset();
+    _tempAnimation = Tween<double>(begin: _currentTemp, end: newTemp)
+        .animate(_tempAnimationController);
+    _tempAnimationController.forward();
+
+    if (hasData && _hasToddler) {
+      _alertModel.processTemperatureUpdate(newTemp);
+    }
+
+    setState(() {
+      _currentTemp = newTemp;
+      _lastUpdateTime = hasData && _hasToddler
+          ? _formatTimestamp(timestamp)
+          : "No data available";
+      _hasHighTempAlert = _hasToddler ? _alertModel.hasHighTempAlert : false;
+    });
+  }
+
+  void _processAlerts(Map<dynamic, dynamic> alertsData) {
+    final alertsList = <Map<String, dynamic>>[];
+
+    alertsData.forEach((key, value) {
+      if (value is Map) {
+        alertsList.add({
+          'id': key.toString(),
+          'type': value['alert_type']?.toString() ?? 'unknown',
+          'temp': value['temperature']?.toString() ?? '0.0',
+          'time': _formatTimestamp(value['timestamp']?.toString() ?? 'Unknown'),
+        });
+      }
+    });
+
+    alertsList.sort((a, b) => b['time'].compareTo(a['time']));
+    setState(() => _alerts = alertsList);
+  }
+
+  String _formatTimestamp(String timestamp) {
+    try {
+      final dateTime = DateTime.parse(timestamp);
+      return DateFormat('MMM dd, hh:mm a').format(dateTime);
+    } catch (e) {
+      return timestamp;
+    }
+  }
+
+  void _onTabChanged(int index) {
+    setState(() {
+      _currentTabIndex = index;
+    });
+  }
+
+  void _navigateToAddToddler() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AddToddlerScreen(
+          onToddlerAdded: () {
+            _loadInitialData();
+          },
+        ),
+      ),
+    );
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _tempAnimationController.dispose();
+    _userDataSubscription.cancel();
+    _toddlerDataSubscription.cancel();
+    _temperatureSubscription.cancel();
+    _alertsSubscription.cancel();
+    _alertModel.dispose();
+    // Do NOT close _databaseService StreamControllers if using singleton
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final size = MediaQuery.of(context).size;
+    double displayTemperature = _tempAnimationController.isAnimating
+        ? _tempAnimation.value
+        : _currentTemp;
+    final List<Color> gradientColors = HomeScreenUI.getBackgroundGradient(displayTemperature);
 
-    // Determine the temperature status and color
-    String tempStatus;
-    Color tempColor;
-    IconData tempIcon;
-
-    double displayTemperature = _animationController.isAnimating
-        ? _temperatureAnimation.value
-        : currentTemperature;
-
-    if (displayTemperature < 36.0) {
-      tempStatus = "Low";
-      tempColor = Colors.blue.shade700;
-      tempIcon = Icons.ac_unit;
-    } else if (displayTemperature >= 36.0 && displayTemperature <= 37.5) {
-      tempStatus = "Normal";
-      tempColor = Colors.green;
-      tempIcon = Icons.check_circle;
-    } else {
-      tempStatus = "High";
-      tempColor = Colors.red;
-      tempIcon = Icons.warning_amber;
+    if (_isLoading) {
+      return HomeScreenUI.buildLoadingScreen(_toddlerName);
     }
 
-    // Calculate temperature gauge position (between 35°C and 40°C)
-    double gaugePosition = (displayTemperature - 35) / 5; // Normalized between 0 and 1
-    gaugePosition = gaugePosition.clamp(0.0, 1.0); // Ensure it stays within bounds
+    if (_errorMessage.isNotEmpty) {
+      return HomeScreenUI.buildErrorScreen(
+        context: context,
+        errorMessage: _errorMessage,
+        onRetry: _loadInitialData,
+      );
+    }
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -125,590 +226,254 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         backgroundColor: Colors.transparent,
         leading: Builder(
           builder: (context) => IconButton(
-            icon: Icon(Icons.menu, color: Colors.white),
+            icon: const Icon(Icons.menu, color: Colors.white),
             onPressed: () => Scaffold.of(context).openDrawer(),
           ),
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.notifications, color: Colors.white),
-            onPressed: () {},
+            icon: Badge(
+              label: Text(_alerts.length.toString()),
+              child: const Icon(Icons.notifications, color: Colors.white),
+            ),
+            onPressed: () {
+              setState(() {
+                _currentTabIndex = 1;
+              });
+            },
           ),
         ],
       ),
-      drawer: Drawer(
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xFF66A6FF),
-                Color(0xFF2A54D5),
-              ],
-            ),
-          ),
-          child: SafeArea(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      CircleAvatar(
-                        radius: 40,
-                        backgroundImage: AssetImage('assets/images/pp1.jpg'),
-                      ),
-                      SizedBox(height: 16),
-                      Text(
-                        userName,
-                        style: TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        "Health Monitor",
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.8),
-                          fontSize: 14,
-                        ),
-                      ),
-                      SizedBox(height: 16),
-                      Divider(color: Colors.white.withOpacity(0.3)),
-                    ],
-                  ),
-                ),
-                _buildDrawerItem(
-                  icon: Icons.dashboard,
-                  title: "Dashboard",
-                  isSelected: true,
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                ),
-                _buildDrawerItem(
-                  icon: Icons.history,
-                  title: "View History",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushNamed(context, '/history');
-                  },
-                ),
-                _buildDrawerItem(
-                  icon: Icons.edit,
-                  title: "Edit Profile",
-                  onTap: () async {
-                    Navigator.pop(context);
-                    String? newName = await showDialog<String>(
-                      context: context,
-                      builder: (BuildContext context) {
-                        TextEditingController controller = TextEditingController();
-                        controller.text = userName;
-
-                        return AlertDialog(
-                          title: Text("Edit Profile"),
-                          content: TextField(
-                            controller: controller,
-                            autofocus: true,
-                            decoration: InputDecoration(
-                              labelText: "Name",
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                          actions: <Widget>[
-                            TextButton(
-                              onPressed: () {
-                                Navigator.pop(context);
-                              },
-                              child: Text("Cancel"),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                Navigator.pop(context, controller.text);
-                              },
-                              child: Text("Save"),
-                            ),
-                          ],
-                        );
-                      },
-                    );
-                    if (newName != null && newName.isNotEmpty) {
-                      updateUserName(newName);
-                    }
-                  },
-                ),
-                _buildDrawerItem(
-                  icon: Icons.person_add,
-                  title: "Add User",
-                  onTap: () {
-                    Navigator.pop(context);
-                    print("Adding user...");
-                  },
-                ),
-                _buildDrawerItem(
-                  icon: Icons.settings,
-                  title: "Settings",
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                ),
-                SizedBox(height: 24),
-                Divider(color: Colors.white.withOpacity(0.3)),
-                _buildDrawerItem(
-                  icon: Icons.logout,
-                  title: "Logout",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.pushReplacementNamed(context, '/login');
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
+      drawer: SideDrawerModel(
+        userName: _userName,
+        currentTabIndex: _currentTabIndex,
+        onTabChanged: _onTabChanged,
       ),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color(0xFF66A6FF), Color(0xFF2A54D5)],
+            colors: gradientColors,
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              // Header section with user info
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 30,
-                      backgroundImage: AssetImage('assets/images/pp1.jpg'),
-                    ),
-                    SizedBox(width: 16),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "Hi, $userName",
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          "Let's check your temperature",
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.white.withOpacity(0.8),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+          child: _buildTabContent(displayTemperature),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTabContent(double displayTemperature) {
+    switch (_currentTabIndex) {
+      case 0:
+        return _buildDashboardTab(displayTemperature);
+      case 1:
+        return _hasToddler
+            ? AlertScreen(
+          alerts: _alerts,
+          databaseService: _databaseService,
+        )
+            : _buildNoToddlerMessage("No alerts available without toddler assignment");
+      case 2:
+        return _hasToddler
+            ? const HistoryScreen()
+            : _buildNoToddlerMessage("No temperature history available without toddler assignment");
+      case 3:
+        return const SettingsScreen();
+      default:
+        return _buildDashboardTab(displayTemperature);
+    }
+  }
+
+  Widget _buildNoToddlerMessage(String message) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.9),
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.info_outline,
+              size: 40,
+              color: Colors.grey[400],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _navigateToAddToddler,
+              icon: const Icon(Icons.add),
+              label: const Text('Add Toddler'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF66A6FF),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-              SizedBox(height: 20),
+  Widget _buildDashboardTab(double displayTemperature) {
+    final tempStatus = HomeScreenUI.getTemperatureStatus(displayTemperature);
+    double gaugePosition = (displayTemperature - 35) / 5;
+    gaugePosition = gaugePosition.clamp(0.0, 1.0);
 
-              // Date display
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    "${_getDayOfWeek(DateTime.now())}, ${_formatDate(DateTime.now())}",
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          HomeScreenUI.buildHeaderSection(
+            userName: _userName,
+            toddlerName: _hasToddler ? _toddlerName : "No toddler assigned",
+          ),
+          const SizedBox(height: 16),
+          HomeScreenUI.buildDateDisplay(),
+          if (!_hasToddler) ...[
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.9),
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.child_care,
+                    size: 48,
+                    color: Colors.grey[400],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    "No Toddler Assigned",
                     style: TextStyle(
-                      fontSize: 16,
-                      color: Colors.white.withOpacity(0.8),
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[700],
                     ),
                   ),
-                ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "Add your toddler's information to start temperature monitoring.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _navigateToAddToddler,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Add Toddler'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF66A6FF),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
+            ),
+          ] else ...[
+            HomeScreenUI.buildToddlerInfoCard(
+              toddlerName: _toddlerName,
+              toddlerAge: _toddlerAge,
+            ),
+            HomeScreenUI.buildTemperatureCard(
+              context: context,
+              displayTemperature: displayTemperature,
+              gaugePosition: gaugePosition,
+              tempStatus: tempStatus,
+              lastUpdateTime: _lastUpdateTime,
+            ),
 
-              // Main temperature display card
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: Card(
-                    elevation: 10,
+            // ---- Bluetooth button BELOW the gauge ----
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 12),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.bluetooth),
+                  label: const Text("Connect to Device"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2A54D5),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(fontSize: 16),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(25),
-                    ),
-                    color: Colors.white,
-                    child: Container(
-                      width: double.infinity,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          // Temperature half circle gauge
-                          Container(
-                            height: size.height * 0.25,
-                            child: CustomPaint(
-                              size: Size(size.width * 0.8, size.height * 0.25),
-                              painter: TemperatureGaugePainter(
-                                gaugePosition: gaugePosition,
-                                arcColor: tempColor,
-                              ),
-                              child: Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    SizedBox(height: 20),
-                                    Icon(
-                                      tempIcon,
-                                      size: 32,
-                                      color: tempColor,
-                                    ),
-                                    SizedBox(height: 8),
-                                    Text(
-                                      displayTemperature.toStringAsFixed(1) + " °C",
-                                      style: TextStyle(
-                                        fontSize: 36,
-                                        fontWeight: FontWeight.bold,
-                                        color: tempColor,
-                                      ),
-                                    ),
-                                    Text(
-                                      tempStatus,
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        color: tempColor,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          // Scale indicators
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 30),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  "35°",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                Text(
-                                  "36°",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                Text(
-                                  "37°",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                Text(
-                                  "38°",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                Text(
-                                  "39°",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                Text(
-                                  "40°",
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          SizedBox(height: 20),
-
-                          // Temperature status card
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 30),
-                            child: Container(
-                              padding: EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: tempColor.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(15),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    tempIcon,
-                                    color: tempColor,
-                                    size: 24,
-                                  ),
-                                  SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          tempStatus + " Temperature",
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: tempColor,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                        SizedBox(height: 4),
-                                        Text(
-                                          _getTemperatureAdvice(displayTemperature),
-                                          style: TextStyle(
-                                            color: Colors.grey.shade700,
-                                            fontSize: 14,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-
-                          // Last check time
-                          Padding(
-                            padding: const EdgeInsets.all(20.0),
-                            child: Text(
-                              "Last updated: " + _formatTime(DateTime.now()),
-                              style: TextStyle(
-                                color: Colors.grey,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                ),
-              ),
+                  onPressed: _toddlerId == null
+                      ? null
+                      : () async {
+                    // Optionally: show a loading indicator here
 
-              // Button row
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: simulateTemperature,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: Color(0xFF2A54D5),
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          elevation: 5,
+                    // Navigate and send user to device
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ConfirmUserPage(
+                          loggedInUser: _toddlerId!,
                         ),
-                        icon: Icon(Icons.refresh),
-                        label: Text("Refresh", style: TextStyle(fontSize: 16)),
                       ),
-                    ),
-                    SizedBox(width: 16),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          Navigator.pushNamed(context, '/history');
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF2A54D5),
-                          foregroundColor: Colors.white,
-                          padding: EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          elevation: 5,
-                        ),
-                        icon: Icon(Icons.history),
-                        label: Text("History", style: TextStyle(fontSize: 16)),
-                      ),
-                    ),
-                  ],
+                    );
+
+                    // Optionally: handle result or show a snackbar
+                    if (result != null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text(result.toString())),
+                      );
+                    }
+                  },
                 ),
               ),
-            ],
-          ),
-        ),
+            )
+
+          ],
+          const SizedBox(height: 16),
+        ],
       ),
     );
-  }
-
-  // Helper function to build drawer items
-  Widget _buildDrawerItem({
-    required IconData icon,
-    required String title,
-    required VoidCallback onTap,
-    bool isSelected = false,
-  }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        child: Container(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: BoxDecoration(
-            color: isSelected ? Colors.white.withOpacity(0.2) : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          margin: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Row(
-            children: [
-              Icon(
-                icon,
-                color: Colors.white,
-                size: 22,
-              ),
-              SizedBox(width: 16),
-              Text(
-                title,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // Helper function to get day of week
-  String _getDayOfWeek(DateTime date) {
-    List<String> weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-    return weekdays[date.weekday - 1];
-  }
-
-  // Helper function to format date
-  String _formatDate(DateTime date) {
-    List<String> months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December'
-    ];
-    return "${date.day} ${months[date.month - 1]} ${date.year}";
-  }
-
-  // Helper function to format time
-  String _formatTime(DateTime time) {
-    String hour = time.hour.toString().padLeft(2, '0');
-    String minute = time.minute.toString().padLeft(2, '0');
-    return "$hour:$minute";
-  }
-
-  // Helper function to get temperature advice
-  String _getTemperatureAdvice(double temp) {
-    if (temp < 36.0) {
-      return "Your temperature is below normal range";
-    } else if (temp >= 36.0 && temp <= 37.5) {
-      return "Your temperature is within normal range";
-    } else {
-      return "Your temperature is above normal range";
-    }
-  }
-}
-
-// Custom painter for the half-circle temperature gauge
-class TemperatureGaugePainter extends CustomPainter {
-  final double gaugePosition; // 0.0 to 1.0
-  final Color arcColor;
-
-  TemperatureGaugePainter({
-    required this.gaugePosition,
-    required this.arcColor,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rect = Rect.fromLTRB(
-      size.width * 0.1,
-      size.height * 0.1,
-      size.width * 0.9,
-      size.height * 2.0,
-    );
-
-    // Background arc
-    final backgroundPaint = Paint()
-      ..color = Colors.grey.shade200
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 18
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawArc(
-      rect,
-      -pi,
-      pi,
-      false,
-      backgroundPaint,
-    );
-
-    // Filled arc based on temperature
-    final arcPaint = Paint()
-      ..color = arcColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 18
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawArc(
-      rect,
-      -pi,
-      pi * gaugePosition,
-      false,
-      arcPaint,
-    );
-
-    // Tick marks
-    final tickPaint = Paint()
-      ..color = Colors.grey.shade400
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-
-    for (int i = 0; i <= 10; i++) {
-      double angle = -pi + (pi / 10 * i);
-      double x1 = size.width / 2 + cos(angle) * (size.width * 0.4);
-      double y1 = size.height + sin(angle) * (size.width * 0.4);
-      double x2 = size.width / 2 + cos(angle) * (size.width * 0.35);
-      double y2 = size.height + sin(angle) * (size.width * 0.35);
-
-      // Only draw tick marks if it's a milestone (every 0.5°C)
-      if (i % 2 == 0) {
-        canvas.drawLine(
-          Offset(x1, y1),
-          Offset(x2, y2),
-          tickPaint,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant TemperatureGaugePainter oldDelegate) {
-    return oldDelegate.gaugePosition != gaugePosition ||
-        oldDelegate.arcColor != arcColor;
   }
 }

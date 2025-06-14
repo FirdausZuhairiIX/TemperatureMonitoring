@@ -1,29 +1,80 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'home_screen.dart';
+import 'package:monitoringtemp/database_service.dart';
 
 class HistoryScreen extends StatefulWidget {
+  const HistoryScreen({super.key});
+
   @override
   _HistoryScreenState createState() => _HistoryScreenState();
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  DateTime selectedDate = DateTime.now();
-  List<Map<String, dynamic>> tempHistory = [
-    {'value': 37.2, 'timestamp': DateTime.now().subtract(Duration(minutes: 5))},
-    {'value': 37.8, 'timestamp': DateTime.now().subtract(Duration(hours: 1))},
-    {'value': 38.1, 'timestamp': DateTime.now().subtract(Duration(days: 1))},
-    {'value': 36.8, 'timestamp': DateTime.now().subtract(Duration(days: 2))},
-    {'value': 37.5, 'timestamp': DateTime.now()},
-  ];
+  DateTime? selectedDate; // Made nullable - null means show latest records
+  List<Map<String, dynamic>> tempHistory = [];
+  bool isLoading = true;
+  String errorMessage = '';
+
+  late DatabaseService _databaseService;
+
+  @override
+  void initState() {
+    super.initState();
+    _databaseService = DatabaseService();
+    _initializeData();
+  }
+
+  @override
+  void dispose() {
+    _databaseService.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initializeData() async {
+    try {
+      setState(() {
+        isLoading = true;
+        errorMessage = '';
+      });
+
+      await _databaseService.initialize();
+
+      // Listen to temperature history changes
+      _databaseService.temperatureHistory.listen((history) {
+        if (mounted) {
+          setState(() {
+            tempHistory = history;
+            isLoading = false;
+          });
+        }
+      });
+
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          errorMessage = e.toString();
+          isLoading = false;
+        });
+      }
+    }
+  }
 
   List<Map<String, dynamic>> getFilteredHistory() {
-    return tempHistory
-        .where((entry) =>
-    entry['timestamp'].year == selectedDate.year &&
-        entry['timestamp'].month == selectedDate.month &&
-        entry['timestamp'].day == selectedDate.day)
-        .toList();
+    if (selectedDate == null) {
+      // Show latest 5 records when no date is selected
+      List<Map<String, dynamic>> sortedHistory = List.from(tempHistory);
+      sortedHistory.sort((a, b) => b['timestamp'].compareTo(a['timestamp']));
+      return sortedHistory.take(5).toList();
+    } else {
+      // Filter by selected date
+      return tempHistory
+          .where((entry) =>
+      entry['timestamp'].year == selectedDate!.year &&
+          entry['timestamp'].month == selectedDate!.month &&
+          entry['timestamp'].day == selectedDate!.day)
+          .toList();
+    }
   }
 
   Color getTemperatureColor(double value) {
@@ -41,8 +92,325 @@ class _HistoryScreenState extends State<HistoryScreen> {
     return DateFormat('h:mm a').format(dateTime);
   }
 
+  // Clear date filter to show latest records
+  void _clearDateFilter() {
+    setState(() {
+      selectedDate = null;
+    });
+  }
+
+  void _showAddTemperatureDialog() {
+    final TextEditingController tempController = TextEditingController();
+    DateTime selectedDateTime = DateTime.now();
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Add Temperature Record'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: tempController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Temperature (°C)',
+                  hintText: 'e.g., 37.5',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                title: const Text('Date & Time'),
+                subtitle: Text(formatDateTime(selectedDateTime)),
+                trailing: const Icon(Icons.calendar_today),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: selectedDateTime,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime.now(),
+                  );
+                  if (date != null) {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: TimeOfDay.fromDateTime(selectedDateTime),
+                    );
+                    if (time != null) {
+                      setDialogState(() {
+                        selectedDateTime = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
+                      });
+                    }
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final tempText = tempController.text.trim();
+                if (tempText.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a temperature')),
+                  );
+                  return;
+                }
+
+                final temperature = double.tryParse(tempText);
+                if (temperature == null || temperature < 30.0 || temperature > 45.0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a valid temperature between 30.0 and 45.0°C')),
+                  );
+                  return;
+                }
+
+                try {
+                  await _databaseService.addTemperatureHistory(
+                    temperature: temperature,
+                    timestamp: selectedDateTime,
+                  );
+
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Temperature record added successfully!')),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to add temperature record: $e')),
+                  );
+                }
+              },
+              child: const Text('Add'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEditTemperatureDialog(Map<String, dynamic> tempData) {
+    final TextEditingController tempController = TextEditingController(
+      text: tempData['value'].toStringAsFixed(1),
+    );
+    DateTime selectedDateTime = tempData['timestamp'];
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Edit Temperature Record'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: tempController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Temperature (°C)',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                title: const Text('Date & Time'),
+                subtitle: Text(formatDateTime(selectedDateTime)),
+                trailing: const Icon(Icons.calendar_today),
+                onTap: () async {
+                  final date = await showDatePicker(
+                    context: context,
+                    initialDate: selectedDateTime,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime.now(),
+                  );
+                  if (date != null) {
+                    final time = await showTimePicker(
+                      context: context,
+                      initialTime: TimeOfDay.fromDateTime(selectedDateTime),
+                    );
+                    if (time != null) {
+                      setDialogState(() {
+                        selectedDateTime = DateTime(
+                          date.year,
+                          date.month,
+                          date.day,
+                          time.hour,
+                          time.minute,
+                        );
+                      });
+                    }
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final tempText = tempController.text.trim();
+                if (tempText.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a temperature')),
+                  );
+                  return;
+                }
+
+                final temperature = double.tryParse(tempText);
+                if (temperature == null || temperature < 30.0 || temperature > 45.0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please enter a valid temperature between 30.0 and 45.0°C')),
+                  );
+                  return;
+                }
+
+                try {
+                  await _databaseService.updateTemperatureHistory(
+                    historyId: tempData['id'],
+                    temperature: temperature,
+                    timestamp: selectedDateTime,
+                  );
+
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Temperature record updated successfully!')),
+                  );
+                } catch (e) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to update temperature record: $e')),
+                  );
+                }
+              },
+              child: const Text('Update'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _deleteTemperatureRecord(Map<String, dynamic> tempData) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Temperature Record'),
+        content: Text(
+          'Are you sure you want to delete the temperature record of ${tempData['value'].toStringAsFixed(1)}°C recorded on ${formatDateTime(tempData['timestamp'])}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () async {
+              try {
+                await _databaseService.deleteTemperatureHistory(tempData['id']);
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Temperature record deleted successfully!')),
+                );
+              } catch (e) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Failed to delete temperature record: $e')),
+                );
+              }
+            },
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (isLoading) {
+      return Scaffold(
+        backgroundColor: Colors.grey[100],
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black87,
+          title: const Text(
+            "Temperature History",
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (errorMessage.isNotEmpty) {
+      return Scaffold(
+        backgroundColor: Colors.grey[100],
+        appBar: AppBar(
+          elevation: 0,
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black87,
+          title: const Text(
+            "Temperature History",
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.error_outline,
+                size: 80,
+                color: Colors.grey[400],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                "Error loading data",
+                style: TextStyle(
+                  fontSize: 18,
+                  color: Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  errorMessage,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _initializeData,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final filteredHistory = getFilteredHistory();
 
     return Scaffold(
@@ -51,16 +419,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
         elevation: 0,
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
-        title: Text(
+        title: const Text(
           "Temperature History",
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         actions: [
           IconButton(
-            icon: Icon(Icons.home),
+            icon: const Icon(Icons.home),
             onPressed: () {
               Navigator.of(context).pushReplacement(
-                MaterialPageRoute(builder: (context) => HomeScreen()),
+                MaterialPageRoute(builder: (context) => const HomeScreen()),
               );
             },
           ),
@@ -69,8 +437,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       body: Column(
         children: <Widget>[
           Container(
-            padding: EdgeInsets.all(16.0),
-            decoration: BoxDecoration(
+            padding: const EdgeInsets.all(16.0),
+            decoration: const BoxDecoration(
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
@@ -83,26 +451,42 @@ class _HistoryScreenState extends State<HistoryScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  "Select Date",
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey[700],
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      selectedDate == null ? "Latest Records" : "Filter by Date",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    if (selectedDate != null)
+                      TextButton.icon(
+                        onPressed: _clearDateFilter,
+                        icon: const Icon(Icons.clear, size: 16),
+                        label: const Text("Show Latest", style: TextStyle(fontSize: 12)),
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                  ],
                 ),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 InkWell(
                   onTap: () async {
                     final DateTime? pickedDate = await showDatePicker(
                       context: context,
-                      initialDate: selectedDate,
+                      initialDate: selectedDate ?? DateTime.now(),
                       firstDate: DateTime(2000),
                       lastDate: DateTime.now(),
                       builder: (context, child) {
                         return Theme(
                           data: Theme.of(context).copyWith(
-                            colorScheme: ColorScheme.light(
+                            colorScheme: const ColorScheme.light(
                               primary: Colors.teal,
                               onPrimary: Colors.white,
                               onSurface: Colors.black,
@@ -112,26 +496,33 @@ class _HistoryScreenState extends State<HistoryScreen> {
                         );
                       },
                     );
-                    if (pickedDate != null && pickedDate != selectedDate) {
+                    if (pickedDate != null) {
                       setState(() {
                         selectedDate = pickedDate;
                       });
                     }
                   },
                   child: Container(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.grey[300]!),
                       borderRadius: BorderRadius.circular(8),
+                      color: selectedDate == null ? Colors.grey[50] : Colors.white,
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          DateFormat('EEEE, MMMM d, yyyy').format(selectedDate),
-                          style: TextStyle(fontSize: 16),
+                          selectedDate == null
+                              ? "Tap to filter by specific date"
+                              : DateFormat('EEEE, MMMM d, yyyy').format(selectedDate!),
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: selectedDate == null ? Colors.grey[600] : Colors.black87,
+                            fontStyle: selectedDate == null ? FontStyle.italic : FontStyle.normal,
+                          ),
                         ),
-                        Icon(Icons.calendar_today, color: Colors.teal),
+                        const Icon(Icons.calendar_today, color: Colors.teal),
                       ],
                     ),
                   ),
@@ -150,17 +541,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
                     size: 80,
                     color: Colors.grey[400],
                   ),
-                  SizedBox(height: 16),
+                  const SizedBox(height: 16),
                   Text(
-                    "No temperature records found",
+                    selectedDate == null
+                        ? "No temperature records found"
+                        : "No records for selected date",
                     style: TextStyle(
                       fontSize: 18,
                       color: Colors.grey[600],
                     ),
                   ),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Text(
-                    "Try selecting a different date",
+                    selectedDate == null
+                        ? "Add some temperature records to get started"
+                        : "Try selecting a different date or clear the filter",
                     style: TextStyle(
                       fontSize: 14,
                       color: Colors.grey[500],
@@ -170,7 +565,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             )
                 : ListView.builder(
-              padding: EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16),
               itemCount: filteredHistory.length,
               itemBuilder: (context, index) {
                 final temp = filteredHistory[index];
@@ -179,7 +574,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 final Color tempColor = getTemperatureColor(value);
 
                 return Container(
-                  margin: EdgeInsets.only(bottom: 12),
+                  margin: const EdgeInsets.only(bottom: 12),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(12),
@@ -187,12 +582,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       BoxShadow(
                         color: Colors.black.withOpacity(0.05),
                         blurRadius: 10,
-                        offset: Offset(0, 4),
+                        offset: const Offset(0, 4),
                       ),
                     ],
                   ),
                   child: ListTile(
-                    contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                     leading: Container(
                       width: 60,
                       height: 60,
@@ -218,14 +613,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                             color: tempColor,
                           ),
                         ),
-                        SizedBox(width: 8),
+                        const SizedBox(width: 8),
                         _getTemperatureStatusWidget(value),
                       ],
                     ),
                     subtitle: Padding(
                       padding: const EdgeInsets.only(top: 8.0),
                       child: Text(
-                        formatTime(timestamp),
+                        selectedDate == null
+                            ? formatDateTime(timestamp) // Show full date and time for latest records
+                            : formatTime(timestamp), // Show only time for date-filtered records
                         style: TextStyle(
                           color: Colors.grey[600],
                           fontSize: 15,
@@ -233,7 +630,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                       ),
                     ),
                     trailing: IconButton(
-                      icon: Icon(Icons.more_vert),
+                      icon: const Icon(Icons.more_vert),
                       onPressed: () {
                         showModalBottomSheet(
                           context: context,
@@ -250,13 +647,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: Colors.teal,
-        child: Icon(Icons.add),
-        onPressed: () {
-          // Add new temperature record
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Add new temperature feature coming soon!")),
-          );
-        },
+        child: const Icon(Icons.add),
+        onPressed: _showAddTemperatureDialog,
       ),
     );
   }
@@ -280,7 +672,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     }
 
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(20),
@@ -302,11 +694,11 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final DateTime timestamp = tempData['timestamp'];
 
     return Container(
-      padding: EdgeInsets.all(20),
+      padding: const EdgeInsets.all(20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
+          const Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
@@ -318,42 +710,38 @@ class _HistoryScreenState extends State<HistoryScreen> {
               ),
             ],
           ),
-          SizedBox(height: 20),
+          const SizedBox(height: 20),
           ListTile(
             leading: Icon(Icons.thermostat, color: getTemperatureColor(value)),
-            title: Text("Temperature"),
+            title: const Text("Temperature"),
             subtitle: Text("${value.toStringAsFixed(1)}°C"),
           ),
           ListTile(
-            leading: Icon(Icons.access_time, color: Colors.blue),
-            title: Text("Time"),
+            leading: const Icon(Icons.access_time, color: Colors.blue),
+            title: const Text("Time"),
             subtitle: Text(formatDateTime(timestamp)),
           ),
-          SizedBox(height: 20),
+          const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               TextButton.icon(
-                icon: Icon(Icons.edit),
-                label: Text("Edit"),
+                icon: const Icon(Icons.edit),
+                label: const Text("Edit"),
                 onPressed: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("Edit feature coming soon!")),
-                  );
+                  _showEditTemperatureDialog(tempData);
                 },
               ),
               TextButton.icon(
-                icon: Icon(Icons.delete, color: Colors.red),
-                label: Text(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                label: const Text(
                   "Delete",
                   style: TextStyle(color: Colors.red),
                 ),
                 onPressed: () {
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("Delete feature coming soon!")),
-                  );
+                  _deleteTemperatureRecord(tempData);
                 },
               ),
             ],

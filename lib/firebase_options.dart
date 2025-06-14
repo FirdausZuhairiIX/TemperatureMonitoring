@@ -55,6 +55,7 @@ class DefaultFirebaseOptions {
     appId: '1:848581046465:android:b29b69e38c760bcad76440',
     messagingSenderId: '848581046465',
     projectId: 'tempmonitoring-7b676',
+    databaseURL: 'https://tempmonitoring-7b676-default-rtdb.asia-southeast1.firebasedatabase.app',
     storageBucket: 'tempmonitoring-7b676.firebasestorage.app',
   );
 
